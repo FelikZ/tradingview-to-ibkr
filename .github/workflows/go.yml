@@ -1,15 +1,14 @@
-# This workflow will build a golang project and create a release
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+# This workflow will build a Golang project, create a release, and build artifacts for multiple OS platforms
 
 name: Go
 
 on:
   push:
-    branches: [ "main" ]
+    tags:
+      - '*'  # Trigger for any tag
   pull_request:
-    branches: [ "main" ]
-  release:
-    types: [created]
+    branches:
+      - 'main'
 
 permissions:
   contents: write  # Grant write permissions to the contents
@@ -17,7 +16,15 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    outputs:
+      windows-artifact: ${{ steps.windows-artifact.outputs.artifact }}
+      linux-artifact: ${{ steps.linux-artifact.outputs.artifact }}
+      macos-artifact: ${{ steps.macos-artifact.outputs.artifact }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        goos: [linux, windows, darwin]
+        goarch: [amd64, amd64, arm64]
     steps:
     - uses: actions/checkout@v4
 
@@ -26,28 +33,43 @@ jobs:
       with:
         go-version: '1.22'
 
-    - name: Build
-      run: go build -o tradingview-to-ibkr
-
-    - name: Test
-      run: go test
+    - name: Build for ${{ matrix.os }}
+      run: go build -o tradingview-to-ibkr-${{ matrix.goos }}-${{ matrix.goarch }} -tags netgo
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
 
     - name: Archive build artifacts
+      id: archive
       uses: actions/upload-artifact@v3
       with:
-        name: tradingview-to-ibkr
-        path: tradingview-to-ibkr
+        name: tradingview-to-ibkr-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: tradingview-to-ibkr-${{ matrix.goos }}-${{ matrix.goarch }}
 
   create_release:
     runs-on: ubuntu-latest
     needs: build
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
     - uses: actions/checkout@v4
 
-    - name: Download build artifact
+    - name: Download build artifacts
       uses: actions/download-artifact@v3
       with:
-        name: tradingview-to-ibkr
+        name: tradingview-to-ibkr-linux-amd64
+        path: ./build/linux64
+
+    - name: Download Windows artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: tradingview-to-ibkr-windows-amd64
+        path: ./build/win64
+
+    - name: Download macOS artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: tradingview-to-ibkr-darwin-arm64
+        path: ./build/mac64
 
     - name: Extract tag name
       id: extract_tag
@@ -67,12 +89,32 @@ jobs:
         draft: false
         prerelease: false
 
-    - name: Upload Release Asset
+    - name: Upload Release Asset (Linux)
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./tradingview-to-ibkr
-        asset_name: tradingview-to-ibkr
+        asset_path: ./build/linux64/tradingview-to-ibkr-linux-amd64
+        asset_name: tradingview-to-ibkr-linux64
+        asset_content_type: application/octet-stream
+
+    - name: Upload Release Asset (Windows)
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./build/win64/tradingview-to-ibkr-windows-amd64
+        asset_name: tradingview-to-ibkr-win64
+        asset_content_type: application/octet-stream
+
+    - name: Upload Release Asset (macOS)
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./build/mac64/tradingview-to-ibkr-darwin-arm64
+        asset_name: tradingview-to-ibkr-macos-arm64
         asset_content_type: application/octet-stream
